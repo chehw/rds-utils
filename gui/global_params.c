@@ -50,6 +50,50 @@ static void print_usuage(const char * exe_name)
 	return;
 }
 
+static int parse_pg_file(const char * full_name, global_params_t * params)
+{
+	struct stat st[1];
+	memset(st, 0, sizeof(st));
+	int rc = stat(full_name, st);
+	if(rc) return -1;
+	
+	int file_type = st->st_mode & S_IFMT;
+	int file_mode = st->st_mode & 07777;
+	if(!(S_ISREG(file_type) && ( (file_mode | 0600) == 0600))) return -1;
+	
+	
+#define set_value_and_find_next(value, p, delim) ({ \
+		char * p_next = NULL;						\
+		p_next = strchr(p, delim);					\
+		if(p_next) *p_next++ = '\0';				\
+		strncpy(value, p, sizeof(value)); 			\
+		p_next;										\
+	})
+
+	fprintf(stderr, "parse pgpass_file: %s\n", full_name);
+	FILE * fp = fopen(full_name, "r");
+	assert(fp);
+	char buf[4096] = "";
+	char * line = NULL;
+	while((line = fgets(buf, sizeof(buf), fp)))
+	{
+		if(line[0] == '\n' || line[0] == '#') continue; // skip empty lines or comment lines
+		char * p = line;
+
+		
+		// parse host
+		p = set_value_and_find_next(params->host,     p, ':'); if(NULL == p) break;
+		p = set_value_and_find_next(params->port,     p, ':'); if(NULL == p) break;
+		p = set_value_and_find_next(params->dbname,   p, ':'); if(NULL == p) break;
+		p = set_value_and_find_next(params->user,     p, ':'); if(NULL == p) break;
+		p = set_value_and_find_next(params->password, p, ':'); if(NULL == p) break;
+
+	}
+	fclose(fp);
+#undef set_value_and_find_next
+	return 0;
+}
+
 global_params_t * global_params_init(global_params_t * params, int argc, char ** argv, void * user_data)
 {
 	if(NULL == params) params = calloc(1, sizeof(*params));
@@ -61,59 +105,8 @@ global_params_t * global_params_init(global_params_t * params, int argc, char **
 		{NULL}
 	};
 	
-	// try to load settings from .pgpass
-	static const char * pgpass_file = ".pgpass";
+	static const char * default_pgpass_file = ".pgpass";
 	char * home_dir = getenv("HOME");
-	char full_name[PATH_MAX] = "";
-	snprintf(full_name, sizeof(full_name), "%s/%s", home_dir, pgpass_file);
-	
-	struct stat st[1];
-	memset(st, 0, sizeof(st));
-	int rc = stat(full_name, st);
-	if(0 == rc) {
-		int file_type = st->st_mode & S_IFMT;
-		int file_mode = st->st_mode & 07777;
-		
-		if(S_ISREG(file_type) && ( (file_mode | 0600) == 0600)) {
-			printf("parse pgpass_file: %s\n", full_name);
-			FILE * fp = fopen(full_name, "r");
-			assert(fp);
-			char buf[4096] = "";
-			char * line = NULL;
-			while((line = fgets(buf, sizeof(buf), fp)))
-			{
-				if(line[0] == '\n' || line[0] == '#') continue; // skip empty lines or comment lines
-				char * tok = NULL;
-				char * value = NULL;
-				value = strtok_r(line, ": \n", &tok);
-				if(NULL == value) break;
-				strncpy(params->host, value, sizeof(params->host));
-				
-				value = strtok_r(NULL, ": \n", &tok);
-				if(NULL == value) break;
-				strncpy(params->port, value, sizeof(params->port));
-				
-				value = strtok_r(NULL, ": \n", &tok);
-				if(NULL == value) break;
-				strncpy(params->dbname, value, sizeof(params->dbname));
-				
-				value = strtok_r(NULL, ": \n", &tok);
-				if(NULL == value) break;
-				strncpy(params->user, value, sizeof(params->user));
-				
-				value = strtok_r(NULL, ": \n", &tok);
-				if(NULL == value) break;
-				strncpy(params->password, value, sizeof(params->password));
-			}
-			
-			
-			fclose(fp);
-		}
-
-	}
-	
-	
-	
 	const char * conf_file = NULL;
 	while(1) {
 		int option_index = 0;
@@ -128,10 +121,27 @@ global_params_t * global_params_init(global_params_t * params, int argc, char **
 			exit(1);
 		}
 	}
-	printf("conf_file: %s\n", conf_file);
+
+	json_object * jconfig = NULL;
+	if(conf_file) {
+		fprintf(stderr, "conf_file: %s\n", conf_file);
+		jconfig = json_object_from_file(conf_file);
+		if(jconfig) params->jconfig = jconfig; 
+	}
 	
-	// add multi-languages support
 	
+	// try to load settings from .pgpass
+	const char * pgpass_file = default_pgpass_file;
+	if(jconfig) {
+		json_object * jvalue = NULL;
+		json_bool ok = json_object_object_get_ex(jconfig, "pgpass_file", &jvalue);
+		if(ok && jvalue) pgpass_file = json_object_get_string(jvalue);
+	}
+	char full_name[PATH_MAX] = "";
+	snprintf(full_name, sizeof(full_name), "%s/%s", home_dir, pgpass_file);
+	parse_pg_file(full_name, params);
+	
+	// TODO: add multi-languages support
 	
 	return params;
 }
