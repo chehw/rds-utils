@@ -76,7 +76,7 @@ static const char * sql_ddl =
 
 struct user_record
 {
-	char user_id[40];	// size should greater than (32 hex digits + 4 dashes)
+	char user_id[40];	// size should be greater than (32 hex digits + 4 dashes)
 	char user_name[128];
 	char email[256];
 	char password[128];
@@ -125,12 +125,12 @@ static psql_context_t * init_connection(int argc, char ** argv, void * user_data
 #include "auto_buffer.h"
 
 #define _TEST_INSERT 
-static const int num_records = 100000;
+static const int num_records = 100 * 1000;
 static user_record_t user[1];
 static double time_elapsed = 0.0;
 static app_timer_t * timer;
 
-void test_nomal_insert_with_prepared_stmt(psql_context_t * psql);
+void test_normal_inserting_with_prepared_stmt(psql_context_t * psql);
 void test_copy_from_text_format(psql_context_t * psql);
 void test_copy_from_binary_format(psql_context_t * psql);
 int main(int argc, char **argv)
@@ -151,7 +151,7 @@ int main(int argc, char **argv)
 		 * $ tests/test-psql-bulk-insert 1
 		 * Beware! very slow!
 		*/
-		test_nomal_insert_with_prepared_stmt(psql);
+		test_normal_inserting_with_prepared_stmt(psql);
 	}
 	
 	test_copy_from_text_format(psql);
@@ -163,13 +163,16 @@ int main(int argc, char **argv)
 	return 0;
 }
 
-void test_nomal_insert_with_prepared_stmt(psql_context_t * psql)
+void test_normal_inserting_with_prepared_stmt(psql_context_t * psql)
 {
 	debug_printf("==== %s(%p) ====\n", __FUNCTION__, psql);
 	int rc = 0;
 	
 	// truncate table before insert
 	rc = psql_execute(psql, "TRUNCATE TABLE " TABLE_NAME ";", NULL);
+	assert(0 == rc);
+	
+	rc = psql_execute(psql, "BEGIN;", NULL);
 	assert(0 == rc);
 	
 #define NUM_PARAMS (3)
@@ -217,6 +220,9 @@ void test_nomal_insert_with_prepared_stmt(psql_context_t * psql)
 	time_elapsed = app_timer_stop(timer);
 	printf("time_elapsed: %.6f ms\n", time_elapsed * 1000.0);
 	
+	rc = psql_execute(psql, "COMMIT;", NULL);
+	assert(0 == rc);
+	
 	// clear records
 	rc = psql_execute(psql, "TRUNCATE TABLE " TABLE_NAME ";", NULL);
 	assert(0 == rc);
@@ -238,6 +244,9 @@ void test_copy_from_text_format(psql_context_t * psql)
 	
 	// truncate table before insert
 	rc = psql_execute(psql, "TRUNCATE TABLE " TABLE_NAME ";", NULL);
+	assert(0 == rc);
+	
+	rc = psql_execute(psql, "BEGIN;", NULL);
 	assert(0 == rc);
 	
 	rc = psql_execute(psql, copy_command, res);
@@ -294,6 +303,9 @@ void test_copy_from_text_format(psql_context_t * psql)
 	
 	time_elapsed = app_timer_stop(timer);
 	printf("time_elapsed: %.6f ms\n", time_elapsed * 1000.0);
+	
+	rc = psql_execute(psql, "COMMIT;", NULL);
+	assert(0 == rc);
 	return;
 }
 
@@ -333,6 +345,9 @@ void test_copy_from_binary_format(psql_context_t * psql)
 	int rc = 0;
 	// truncate table before insert
 	rc = psql_execute(psql, "TRUNCATE TABLE " TABLE_NAME ";", NULL);
+	assert(0 == rc);
+	
+	rc = psql_execute(psql, "BEGIN;", NULL);
 	assert(0 == rc);
 	
 	psql_result_t res = NULL;
@@ -440,6 +455,9 @@ void test_copy_from_binary_format(psql_context_t * psql)
 	time_elapsed = app_timer_stop(timer);
 	printf("time_elapsed: %.6f ms\n", time_elapsed * 1000.0);
 	
+	
+	rc = psql_execute(psql, "COMMIT;", NULL);
+	assert(0 == rc);
 	
 	//~ res = PQgetResult(conn);
 	//~ ExecStatusType status = PQresultStatus(res);
