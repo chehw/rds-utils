@@ -57,4 +57,4 @@ obj/*
 env.sh
 tests/*
 !tests/make.sh
-
+!tests/*.c
