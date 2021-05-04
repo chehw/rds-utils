@@ -5,7 +5,7 @@ TARGET=${1-"all"}
 TARGET=$(basename "$TARGET")
 TARGET=${TARGET/.[ch]/}
 
-CC="gcc -std=gnu99 -D_DEFAULT_SOURCE -D_STAND_ALONE -g -Wall -Iinclude -Iutils "
+CC="gcc -std=gnu99 -D_DEFAULT_SOURCE -D_STAND_ALONE -g -D_DEBUG -Wall -Iinclude -Iutils "
 
 case "${TARGET}" in
 	rdb-postgres)

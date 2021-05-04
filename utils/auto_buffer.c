@@ -66,7 +66,7 @@ int auto_buffer_resize(auto_buffer_t * buf, size_t size)
 	buf->data = data;
 	buf->size = size;
 	
-	debug_printf("%s(%p): data=%p", __FUNCTION__, buf, buf?buf->data:NULL);
+	//~ debug_printf("%s(%p): data=%p", __FUNCTION__, buf, buf?buf->data:NULL);
 	return 0;
 }
 void auto_buffer_cleanup(auto_buffer_t * buf)

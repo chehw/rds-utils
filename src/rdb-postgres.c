@@ -288,7 +288,7 @@ static inline int psql_check_result(psql_context_t * psql, const psql_result_t r
 	snprintf(psql->err_msg, sizeof(psql->err_msg), "STATUS: %d(%s): %s", 
 		status, PQresStatus(status), 
 		PQresultErrorMessage(res));
-	fprintf(stderr, "%s\n", psql->err_msg);
+	//fprintf(stderr, "%s\n", psql->err_msg);
 
 	switch(status) {
 	case PGRES_COMMAND_OK:
