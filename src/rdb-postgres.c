@@ -137,6 +137,8 @@ typedef struct psql_context
 	
 	ConnStatusType conn_status;
 	avl_tree_t named_params_tree[1];
+	
+	char err_msg[PATH_MAX];
 }psql_context_t;
 
 psql_context_t * psql_context_init(psql_context_t * psql, void * user_data)
@@ -303,7 +305,7 @@ int psql_execute(psql_context_t * psql, const char * command, void ** p_result)
 	return 0;
 }
 
-int psql_exec_params(psql_context_t * psql, const char * command, psql_params_t * params, void ** p_result)
+int psql_exec_params(psql_context_t * psql, const char * command, const psql_params_t * params, void ** p_result)
 {
 	assert(psql && psql->conn);
 	PGconn * conn = psql->conn;
@@ -325,14 +327,11 @@ int psql_exec_params(psql_context_t * psql, const char * command, psql_params_t 
 	return 0;
 }
 
-int psql_prepare(psql_context_t * psql, const char * query, 
-	const char * stmt_name, 
-	const int num_params,
-	const unsigned int * types)
+int psql_prepare(psql_context_t * psql, const char * query, const psql_prepare_params_t * prepare_params)
 {
 	assert(psql && psql->conn);
 	PGconn * conn = psql->conn;
-	PGresult * result = PQprepare(conn, stmt_name, query, num_params, types);
+	PGresult * result = PQprepare(conn, prepare_params->stmt_name, query, prepare_params->num_params, prepare_params->types);
 	
 	if(NULL == result) return -1;
 	PQclear(result);
@@ -393,6 +392,105 @@ int psql_result_get_fields(const psql_result_t res, const char *** p_fields)
 	return num_fields;
 }
 
+
+/* *********************************** **
+ * Asynchronous Command Processing
+** *********************************** */
+int psql_send_query(psql_context_t * psql, const char * command)
+{
+	assert(psql && psql->conn);
+	PGconn * conn = psql->conn;
+	psql->err_msg[0] = '\0';
+	
+	int ok = PQsendQuery(conn, command);
+	if(!ok) {
+		const char * err_msg = PQerrorMessage(conn);
+		if(err_msg) {
+			strncpy(psql->err_msg, err_msg, sizeof(psql->err_msg));
+		}
+		return -1;
+	}
+	return 0;
+}
+
+int psql_send_query_params(psql_context_t * psql, const char * command, const psql_params_t * params)
+{
+	assert(psql && psql->conn);
+	PGconn * conn = psql->conn;
+	psql->err_msg[0] = '\0';
+	
+	int ok = PQsendQueryParams(conn, command, params->num_params, 
+		params->types, params->values, params->cb_values, params->value_formats, 
+		params->result_format);
+	if(!ok) {
+		const char * err_msg = PQerrorMessage(conn);
+		if(err_msg) {
+			strncpy(psql->err_msg, err_msg, sizeof(psql->err_msg));
+		}
+		return -1;
+	}
+	return 0;
+}
+
+int psql_send_prepare(psql_context_t * psql, const char * query, const char * stmt_name, int num_params, const unsigned int * param_types)
+{
+	assert(psql && psql->conn);
+	PGconn * conn = psql->conn;
+	psql->err_msg[0] = '\0';
+	
+	int ok = PQsendPrepare(conn, stmt_name, query, num_params, param_types);
+	if(!ok) {
+		const char * err_msg = PQerrorMessage(conn);
+		if(err_msg) {
+			strncpy(psql->err_msg, err_msg, sizeof(psql->err_msg));
+		}
+		return -1;
+	}
+	return 0;
+}
+
+int psql_send_query_prepared(psql_context_t * psql, const char * stmt_name, const psql_params_t * params)
+{
+	assert(psql && psql->conn);
+	PGconn * conn = psql->conn;
+	psql->err_msg[0] = '\0';
+	
+	int ok = PQsendQueryPrepared(conn, stmt_name, 
+		params->num_params, 
+		params->values, params->cb_values, params->value_formats,
+		params->result_format);
+	if(!ok) {
+		const char * err_msg = PQerrorMessage(conn);
+		if(err_msg) {
+			strncpy(psql->err_msg, err_msg, sizeof(psql->err_msg));
+		}
+		return -1;
+	}
+	return 0;
+}
+
+enum {
+	FAILED = -1,
+	NO_MORE_RESULTS = 0,
+	MORE_RESULTS = 1
+};
+int psql_get_result(psql_context_t * psql, psql_result_t * p_result)
+{
+	assert(psql && psql->conn);
+	PGconn * conn = psql->conn;
+	psql->err_msg[0] = '\0';
+	
+	PGresult * res = PQgetResult(conn);
+	if(NULL == res) return NO_MORE_RESULTS;	// ok and and there will be no more results.
+	
+	if(NULL == p_result) {
+		PQclear(res);
+		return MORE_RESULTS;
+	}
+	*p_result = res;
+	return MORE_RESULTS; // ok and maybe more results available.
+}
+
 #if defined(_TEST_RDB_POSTGRES) && defined(_STAND_ALONE)
 /* *******************************************************
  * - build:
@@ -401,6 +499,50 @@ int psql_result_get_fields(const psql_result_t res, const char *** p_fields)
  * - run tests:
  *   $ valgrind --leak-check=full tests/rdb-postgres
 ** ******************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+
+typedef struct app_timer
+{
+	double begin;
+	double end;
+}app_timer_t;
+
+static app_timer_t s_app_timer[1];
+app_timer_t * app_timer_start(app_timer_t * timer)
+{
+	if(NULL == timer) timer = s_app_timer;
+	struct timespec ts= { 0 };
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	timer->begin = (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
+	return timer;
+}
+double app_timer_get_elapsed(app_timer_t * timer)
+{
+	if(NULL == timer) timer = s_app_timer;
+	struct timespec ts= { 0 };
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	timer->end = (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
+	return (timer->end - timer->begin);
+}
+double app_timer_stop(app_timer_t * timer)
+{
+	if(NULL == timer) timer = s_app_timer;
+	struct timespec ts= { 0 };
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	timer->end = (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
+	
+	// reset timer
+	timer->end -= timer->begin;
+	timer->begin = 0;
+	return timer->end;
+}
 
 void dump_result(PGresult * res)
 {
@@ -426,8 +568,10 @@ void dump_result(PGresult * res)
 }
 static psql_context_t g_psql[1];
 
-int test_psql_execute(psql_context_t * conn);
-int test_psql_prepare(psql_context_t * conn);
+int test_psql_execute(psql_context_t * psql);
+int test_psql_prepare(psql_context_t * psql);
+int test_async_query(psql_context_t * psql);
+
 int main(int argc, char **argv)
 {
 	// load login info from environment variables: 
@@ -464,6 +608,7 @@ int main(int argc, char **argv)
 	test_psql_execute(psql);
 	test_psql_prepare(psql);
 	
+	test_async_query(psql);
 	
 	
 	PQfinish(psql->conn);
@@ -480,9 +625,16 @@ int test_psql_execute(psql_context_t * psql)
 	
 	psql_result_t res = NULL;
 	int rc = 0;
+	
+	double time_elapsed = 0.0;
+	app_timer_t * timer = app_timer_start(NULL);
+	
 	rc = psql_execute(psql, list_tables_command, &res);
 	assert(0 == rc && res);
 	assert(res);
+	
+	time_elapsed = app_timer_stop(timer);
+	printf(" --> time elapsed: %.6f ms\n", time_elapsed * 1000.0);
 	
 	dump_result(res);
 	psql_result_clear(&res);
@@ -513,17 +665,76 @@ int test_psql_prepare(psql_context_t * psql)
 		text_format = 0,
 		binary_format = 1
 	};
-	psql_params_setv(params, num_params, text_format, 0, schema, cb_schema, binary_format);
+	psql_params_setv(params, num_params, text_format, oid_types[0], schema, cb_schema, binary_format);
+
+	char * stmt_name = "list-table";
+	psql_prepare_params_t prepare_params[1] = {{
+		.stmt_name = stmt_name,
+		.num_params = 1,
+		.types = oid_types,
+	}};
 	
-	const char * stmt_name = "list table";
-	psql_prepare(psql, list_tables_prepare_query, stmt_name,
-		num_params, oid_types);
+	double time_elapsed = 0.0;
+	app_timer_t * timer = app_timer_start(NULL);
+	
+	rc = psql_prepare(psql, list_tables_prepare_query, prepare_params);
+	assert(0 == rc);
+	
 	rc = psql_exec_prepared(psql, stmt_name, params, &res);
 	assert(0 == rc);
+	
+	time_elapsed = app_timer_stop(timer);
+	printf(" --> time elapsed: %.6f ms\n", time_elapsed * 1000.0);
+	
 	dump_result(res);
 	
 	psql_result_clear(&res);
 	psql_params_cleanup(params_buf);
+	return 0;
+}
+
+int test_async_query(psql_context_t * psql)
+{
+	printf("==== %s(%p) ====\n", __FUNCTION__, psql);
+	// list tables under schema::'bams_user'
+	static const char * list_tables_command = "select * from pg_tables where schemaname='bams_user';";
+	
+	psql_result_t res = NULL;
+	int rc = 0;
+	
+	double time_elapsed = 0.0;
+	app_timer_t * timer = app_timer_start(NULL);
+	
+	rc = psql_send_query(psql, list_tables_command);
+	assert(0 == rc);
+	
+	struct timespec check_intervals = {
+		.tv_sec = 0,
+		.tv_nsec = 10 * 1000000, // check status every 10 ms
+	};
+	
+	int num_results = 0;
+	while(1) {
+		rc = psql_get_result(psql, &res);
+		if(rc <= 0) break;
+		
+		time_elapsed = app_timer_stop(timer);
+		++num_results;
+		printf(" results[%d]--> time elapsed: %.6f ms\n", num_results, time_elapsed * 1000.0);
+		
+	
+		dump_result(res);
+		psql_result_clear(&res);
+		struct timespec remaining = {
+			.tv_sec = 0,
+			.tv_nsec = 0,
+		};
+		nanosleep(&check_intervals, &remaining);
+	}
+	
+	
+	
+	psql_result_clear(&res);
 	return 0;
 }
 #endif

@@ -8,10 +8,9 @@ extern "C" {
 #include <stdarg.h>
 #include "avl_tree.h"
 
-#define PSQL_PREPARE_PARAMS_MAX_LEN (256)
 typedef struct psql_prepare_params
 {
-	char stmt_name[PSQL_PREPARE_PARAMS_MAX_LEN];
+	const char * stmt_name;
 	int num_params;
 	unsigned int * types;
 }psql_prepare_params_t;
@@ -33,7 +32,6 @@ int psql_params_setv(psql_params_t * params,
 	...);
 
 
-
 typedef void * psql_result_t;
 void psql_result_clear(psql_result_t * p_result);
 const char * psql_result_get_value(const psql_result_t res, int row, int col);
@@ -50,9 +48,19 @@ int psql_connect_async_wait(psql_context_t * psql, int64_t timeout_ms);
 int psql_disconnect(psql_context_t * psql);
 
 int psql_execute(psql_context_t * psql, const char * command, void ** p_result);
-int psql_exec_params(psql_context_t * psql, const char * command, psql_params_t * params, psql_result_t * p_result);
-int psql_prepare(psql_context_t * psql, const char * query, const char * stmt_name, const int num_params, const unsigned int * types);
+int psql_exec_params(psql_context_t * psql, const char * command, const psql_params_t * params, psql_result_t * p_result);
+int psql_prepare(psql_context_t * psql, const char * query, const psql_prepare_params_t * prepare_params);
 int psql_exec_prepared(psql_context_t * psql, const char * stmt_name, const psql_params_t * params, psql_result_t * p_result);
+
+
+/**
+ * psql_get_result()
+ * 	@return 
+ * 		>  0: ok and and there will be no more results.
+ * 		>  1: ok and maybe more results available.
+ * 		> -1: failed.
+*/
+int psql_get_result(psql_context_t * psql, psql_result_t * p_result);
 
 #ifdef __cplusplus
 }

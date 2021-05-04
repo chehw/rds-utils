@@ -389,12 +389,16 @@ int load_schemas(db_viewer_ui_context_t * ui, GtkWidget * left_panel, psql_conte
 	
 	static const char * stmt_list_tables = "list-tables";
 	static const char * stmt_list_views  = "list-views";
-	rc = psql_prepare(psql, "select tablename, tableowner from pg_catalog.pg_tables where schemaname=$1 ;", 
-		stmt_list_tables, 1, NULL);
+	psql_prepare_params_t prepare_params[1] = {{
+		.stmt_name = stmt_list_tables, 
+		.num_params = 1,
+		.types = NULL
+	}};
+	rc = psql_prepare(psql, "select tablename, tableowner from pg_catalog.pg_tables where schemaname=$1 ;", prepare_params);
 	assert(0 == rc);
 	
-	rc = psql_prepare(psql, "select viewname, viewowner from pg_catalog.pg_views where schemaname=$1 ;",
-		stmt_list_views, 1, NULL);
+	prepare_params->stmt_name = stmt_list_views;
+	rc = psql_prepare(psql, "select viewname, viewowner from pg_catalog.pg_views where schemaname=$1 ;", prepare_params);
 	assert(0 == rc);
 	
 	psql_params_t query_params[1];

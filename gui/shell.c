@@ -187,6 +187,8 @@ int shell_set_status(shell_context_t * shell, const char * fmt, ...)
 		if(cb <= 0) return -1;
 	}
 	guint msg_id = gtk_statusbar_get_context_id(statusbar, msg_desc);
+	
+	gtk_statusbar_pop(statusbar, msg_id);
 	gtk_statusbar_push(statusbar, msg_id, text);
 	
 	return 0;
