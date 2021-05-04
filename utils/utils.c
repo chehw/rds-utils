@@ -37,9 +37,12 @@
 #include <errno.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <time.h>
+#include <pthread.h>
+
 #include "utils.h"
 #include "clib-stack.h"
-#include <time.h>
+
 
 ssize_t unix_time_to_string(
 	const time_t tv_sec, 

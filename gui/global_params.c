@@ -88,7 +88,7 @@ static int parse_pg_file(const char * full_name, global_params_t * params)
 		p = set_value_and_find_next(params->dbname,   p, ':'); if(NULL == p) break;
 		p = set_value_and_find_next(params->user,     p, ':'); if(NULL == p) break;
 		p = set_value_and_find_next(params->password, p, ':'); if(NULL == p) break;
-
+		break;
 	}
 	fclose(fp);
 #undef set_value_and_find_next

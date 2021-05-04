@@ -138,6 +138,7 @@ typedef struct psql_context
 	ConnStatusType conn_status;
 	avl_tree_t named_params_tree[1];
 	
+	ExecStatusType exec_status;
 	char err_msg[PATH_MAX];
 }psql_context_t;
 
@@ -213,7 +214,9 @@ int psql_connect_db(psql_context_t * psql, const char * sz_conn, int async_mode)
 		
 		/* Set always-secure search path, so malicious users can't take control. */
 		psql_result_t res = PQexec(conn, 
-			"SELECT pg_catalog.set_config('search_path', '', false)");
+			//~ "SELECT pg_catalog.set_config('search_path', '', false)");
+			"SELECT pg_catalog.set_config('search_path', '\"$user\", public', false)");
+			
 		if(PQresultStatus(res) != PGRES_TUPLES_OK) {
 			fprintf(stderr, "[ERROR]: set_config(search_path) failed: \n"
 				"  - err_msg: %s\n",
@@ -275,27 +278,52 @@ int psql_connect_async_wait(psql_context_t * psql, int64_t timeout_ms)
 	return 0;
 }
 
-#define psql_check_result_on_error_return(conn, command, res) do { \
-		if(NULL == res) { \
-			fprintf(stderr, "[ERROR]:%s(%s): %s\n", __FUNCTION__, command, PQerrorMessage(conn)); \
-			return -1; \
-		} \
-		ExecStatusType status = PQresultStatus(res); \
-		if(status != PGRES_TUPLES_OK) { \
-			fprintf(stderr, "[ERROR]:%s(%s): %s\n", __FUNCTION__, command,  \
-				PQresultErrorMessage(res)); \
-			PQclear(res); \
-			return -1; \
-		} \
-	}while(0)
 
+	
+static inline int psql_check_result(psql_context_t * psql, const psql_result_t res)
+{
+	ExecStatusType status = PQresultStatus(res);
+	psql->exec_status = status;
+	
+	snprintf(psql->err_msg, sizeof(psql->err_msg), "STATUS: %d(%s): %s", 
+		status, PQresStatus(status), 
+		PQresultErrorMessage(res));
+	fprintf(stderr, "%s\n", psql->err_msg);
+
+	switch(status) {
+	case PGRES_COMMAND_OK:
+	case PGRES_TUPLES_OK:
+	case PGRES_SINGLE_TUPLE:
+		return 0;	// ok
+	
+	case PGRES_EMPTY_QUERY:
+	case PGRES_COPY_OUT:
+	case PGRES_COPY_IN:
+	case PGRES_COPY_BOTH:
+	case PGRES_NONFATAL_ERROR:
+		return 1;	// ok with informations
+
+	case PGRES_BAD_RESPONSE:
+	case PGRES_FATAL_ERROR:
+	default:
+		break;
+	}
+	return -1;	// failed
+}
+
+#define psql_check_result_on_error_return(conn, res) do { 	\
+		if(psql_check_result(psql, res) < 0) {						\
+			fprintf(stderr, "[ERROR]: %s\n", psql->err_msg);		\
+			return -1;												\
+		}															\
+	}while(0)
 int psql_execute(psql_context_t * psql, const char * command, void ** p_result)
 {
 	assert(psql && psql->conn);
 	PGconn * conn = psql->conn;
 	PGresult * result = PQexec(conn, command);
 	
-	psql_check_result_on_error_return(conn, command, result);
+	psql_check_result_on_error_return(conn, result);
 	
 	if(p_result) {
 		*p_result = result;
@@ -317,7 +345,7 @@ int psql_exec_params(psql_context_t * psql, const char * command, const psql_par
 		params->result_format
 	);
 	
-	psql_check_result_on_error_return(conn, command, result);
+	psql_check_result_on_error_return(conn, result);
 	
 	if(p_result) {
 		*p_result = result;
@@ -351,7 +379,7 @@ int psql_exec_prepared(psql_context_t * psql, const char * stmt_name, const psql
 		params->result_format
 	);
 	
-	psql_check_result_on_error_return(conn, stmt_name, result);
+	psql_check_result_on_error_return(conn, result);
 	if(p_result) {
 		*p_result = result;
 	}else {
@@ -508,41 +536,8 @@ int psql_get_result(psql_context_t * psql, psql_result_t * p_result)
 #include <time.h>
 #include <unistd.h>
 
-typedef struct app_timer
-{
-	double begin;
-	double end;
-}app_timer_t;
+#include "app_timer.h"
 
-static app_timer_t s_app_timer[1];
-app_timer_t * app_timer_start(app_timer_t * timer)
-{
-	if(NULL == timer) timer = s_app_timer;
-	struct timespec ts= { 0 };
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	timer->begin = (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
-	return timer;
-}
-double app_timer_get_elapsed(app_timer_t * timer)
-{
-	if(NULL == timer) timer = s_app_timer;
-	struct timespec ts= { 0 };
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	timer->end = (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
-	return (timer->end - timer->begin);
-}
-double app_timer_stop(app_timer_t * timer)
-{
-	if(NULL == timer) timer = s_app_timer;
-	struct timespec ts= { 0 };
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	timer->end = (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
-	
-	// reset timer
-	timer->end -= timer->begin;
-	timer->begin = 0;
-	return timer->end;
-}
 
 void dump_result(PGresult * res)
 {
