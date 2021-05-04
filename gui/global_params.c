@@ -77,10 +77,11 @@ static int parse_pg_file(const char * full_name, global_params_t * params)
 	char * line = NULL;
 	while((line = fgets(buf, sizeof(buf), fp)))
 	{
-		if(line[0] == '\n' || line[0] == '#') continue; // skip empty lines or comment lines
-		char * p = line;
-
+		int cb = strlen(line);
+		while(cb > 0 && (line[cb - 1] == '\n' || line[cb - 1] == '\r')) line[--cb] = '\0';
+		if(0 == cb || line[0] == '#') continue; // skip empty lines or comment lines
 		
+		char * p = line;
 		// parse host
 		p = set_value_and_find_next(params->host,     p, ':'); if(NULL == p) break;
 		p = set_value_and_find_next(params->port,     p, ':'); if(NULL == p) break;
